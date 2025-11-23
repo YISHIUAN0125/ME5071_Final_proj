@@ -206,3 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 models/
+data/
+source_dir/
+data/yolo/
+*.pt
+runs/
