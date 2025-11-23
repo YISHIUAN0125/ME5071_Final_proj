@@ -3,7 +3,10 @@
 ```
 pip install -r requrements.txt
 ```
-
+## Dataset
+```
+https://huggingface.co/datasets/t8015ny/ME5071_Final_Proj/tree/main
+```
 ## Project structure example
 ```
 ME5071_Final_proj
@@ -13,3 +16,4 @@ ME5071_Final_proj
 |--src/
 |--tools/
 ```
+
