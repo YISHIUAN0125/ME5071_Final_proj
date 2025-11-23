@@ -2,6 +2,7 @@
 ## Installation
 ```
 pip install -r requrements.txt
+pip install -e .
 ```
 ## Dataset
 ```
