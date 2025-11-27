@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-def fourier_augmentation(img_src, img_trg, beta=0.01):
+def fourier_augmentation(img_src, img_trg, beta=0.001):
     """
     img_src, img_trg: Numpy arrays (H, W, 3) RGB
     beta: 替換中心區域的大小 (0 ~ 1)
@@ -40,3 +40,32 @@ def fourier_augmentation(img_src, img_trg, beta=0.01):
     img_new = np.clip(img_new, 0, 255).astype(np.uint8)
     
     return img_new
+
+if __name__ == '__main__':
+    import os, random
+    # 測試
+    source_dir = 'data/domain_a/train/images'
+    target_dir = 'data/domain_b/train/images'
+
+    # 隨機挑一張 Source 和一張 Target
+    src_path = os.path.join(source_dir, random.choice(os.listdir(source_dir)))
+    trg_path = os.path.join(target_dir, random.choice(os.listdir(target_dir)))
+
+    img_src = cv2.imread(src_path)
+    img_trg = cv2.imread(trg_path)
+    print(img_src.shape)
+
+    # 測試不同的 beta
+    betas = [0.001, 0.05, 0.1] 
+    combined = [img_src]
+
+    for b in betas:
+        aug = fourier_augmentation(img_src, img_trg, beta=b)
+        # 在圖片上寫上 beta 值
+        cv2.putText(aug, f"beta={b}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        combined.append(aug)
+
+    # 拼在一起顯示
+    final_img = np.hstack(combined)
+    cv2.imwrite("debug_fourier.jpg", final_img)
+    print("Saved debug_fourier.jpg, please check it.")

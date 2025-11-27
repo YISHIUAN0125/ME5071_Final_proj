@@ -8,7 +8,7 @@ import random
 from utils.augmentation import fourier_augmentation
 
 class CustomDataset(Dataset):
-    def __init__(self, root_dir, subset='train', transforms=None, target_img_paths=None, fourier_prob=0.0):
+    def __init__(self, root_dir, subset='train', transforms=None, target_img_paths=None, fourier_prob=0.0, beta=0.001):
         """
         root_dir: e.g., 'data/domain_a'
         subset: 'train', 'valid', or 'test'
@@ -26,6 +26,7 @@ class CustomDataset(Dataset):
         self.transforms = transforms
         self.target_img_paths = target_img_paths
         self.fourier_prob = fourier_prob
+        self.beta = beta
 
     def __len__(self):
         return len(self.img_paths)
@@ -49,7 +50,7 @@ class CustomDataset(Dataset):
                 img_trg = cv2.cvtColor(img_trg, cv2.COLOR_BGR2RGB)
                 # Resize target to match source for FFT
                 img_trg = cv2.resize(img_trg, (w, h))
-                img = fourier_augmentation(img, img_trg, beta=0.01)
+                img = fourier_augmentation(img, img_trg, beta=self.beta)
 
         # 3. 讀取標籤
         lbl_name = os.path.splitext(os.path.basename(img_path))[0] + ".txt"

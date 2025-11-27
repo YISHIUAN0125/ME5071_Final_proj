@@ -24,7 +24,8 @@ class Trainer:
         print_freq=10,
         patience=5,
         min_delta=0.001,
-        save_interval=20  # [New] Save checkpoint every N epochs
+        save_interval=20,  # [New] Save checkpoint every N epochs
+        **kwargs
     ):
         self.model = model.to(device)
         self.source_loader = source_loader
@@ -54,9 +55,12 @@ class Trainer:
             self.optimizer = optimizer
         
         if scheduler == 'cosine':
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=total_epochs, eta_min=0.0001)
+            eta_min = kwargs.get('eta_min', 0.0001)
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=total_epochs, eta_min=eta_min)
         elif scheduler == 'step':
-            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=6, gamma=0.7)
+            step_size = kwargs.get('step_size', 6)
+            gamma = kwargs.get('gamma', 0.7)
+            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=step_size, gamma=gamma)
 
         os.makedirs(self.save_dir, exist_ok=True)
         
