@@ -35,6 +35,7 @@ class CustomDataset(Dataset):
         
         # 1. 讀取圖片
         img = cv2.imread(img_path)
+
         if img is None:
             raise ValueError(f"無法讀取圖片: {img_path}")
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
