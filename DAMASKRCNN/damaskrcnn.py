@@ -35,9 +35,6 @@ class DAMaskRCNN(nn.Module):
         
         # 1. 提取特徵 (Backbone)
         features = self.backbone(images.tensors) 
-        # features 是一個 dict: {'0': ..., '1': ..., 'pool': ...}，FPN 通常取最高層或多層
-        # 取 FPN 的所有層做平均或只取某一特定層給 Discriminator
-        # 假設我們對所有層都做 adversarial (比較強)
         
         domain_loss = 0
         if mode != 'inference':

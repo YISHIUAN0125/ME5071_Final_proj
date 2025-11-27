@@ -104,7 +104,6 @@ def main():
 
         lr_scheduler.step()
         
-        # 簡單存檔
         torch.save(model.state_dict(), f"da_maskrcnn_epoch_{epoch+1}.pth")
         print(f"Epoch {epoch+1} 完成。平均 Det Loss: {total_loss_det/len(loader_source):.4f}")
 
