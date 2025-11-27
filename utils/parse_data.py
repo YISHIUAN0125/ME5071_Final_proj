@@ -95,7 +95,7 @@ class DatasetBuilder:
             os.path.join(source_root, rel_path),
             os.path.join(source_root, os.path.basename(rel_path))
         ]
-        
+
         src_path = next((p for p in possible_paths if os.path.exists(p)), None)
         if not src_path: return
 
@@ -154,6 +154,10 @@ class DatasetBuilder:
         for img_id, img_info in imgs.items():
             fname = img_info.get('file_name', '')
             path = img_info.get('path', fname)
+
+            if path.startswith('/'):
+                path = path[1:]
+
             polys = []
             if img_id in anns:
                 for a in anns[img_id]:

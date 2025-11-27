@@ -211,3 +211,5 @@ source_dir/
 data/yolo/
 *.pt
 runs/
+.vscode/
+inference_results/
