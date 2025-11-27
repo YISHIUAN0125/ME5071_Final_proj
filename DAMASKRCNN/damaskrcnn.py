@@ -15,7 +15,7 @@ class DAMaskRCNN(nn.Module):
         # trainable_layers=3 means we train the top 3 blocks (standard for detection)
         if backbone_name == 'resnet34':
             weights = torchvision.models.ResNet34_Weights.DEFAULT #TODO Disable pretrained weight
-            backbone = resnet_fpn_backbone('resnet34', weights=None, trainable_layers=3)
+            backbone = resnet_fpn_backbone('resnet34', weights=weights, trainable_layers=3)
         else:
             # Fallback to ResNet-50 if needed
             weights = torchvision.models.ResNet50_Weights.DEFAULT
