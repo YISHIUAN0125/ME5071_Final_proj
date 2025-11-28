@@ -7,6 +7,7 @@ import argparse
 import random
 from DAMASKRCNN.damaskrcnn import DAMaskRCNN
 
+
 # 設定顏色 (隨機生成)
 def random_color():
     return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
@@ -56,6 +57,8 @@ class Inferencer:
         
         # 顯示或存檔
         if output_path:
+            cv2.imshow('test', result_img)
+            cv2.waitKey(10)
             cv2.imwrite(output_path, result_img)
             print(f"Saved result to: {output_path}")
         else:

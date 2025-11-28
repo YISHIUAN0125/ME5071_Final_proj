@@ -29,6 +29,7 @@ class Discriminator(nn.Module):
             nn.ReLU(True),
             nn.AdaptiveAvgPool2d(1), # 1x1
             nn.Flatten(),
+            nn.Dropout(0.4),
             nn.Linear(64, 1) # Logit (Source vs Target)
         )
 

@@ -55,7 +55,7 @@ class Trainer:
             self.optimizer = optimizer
         
         if scheduler == 'cosine':
-            eta_min = kwargs.get('eta_min', 0.0001)
+            eta_min = kwargs.get('eta_min', 0)
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=total_epochs, eta_min=eta_min)
         elif scheduler == 'step':
             step_size = kwargs.get('step_size', 6)
@@ -110,7 +110,7 @@ class Trainer:
         total_time = time.time() - start_time
         print(f"Training finished in {total_time // 3600:.0f}h {(total_time % 3600) // 60:.0f}m")
 
-    def check_early_stopping(self, val_loss):
+    def check_early_stopping(self, val_loss): # TODO fix early stopping
         # If loss improves
         if val_loss < (self.best_val_loss - self.min_delta):
             self.best_val_loss = val_loss
