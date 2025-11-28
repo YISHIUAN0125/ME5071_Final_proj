@@ -50,7 +50,8 @@ class CustomDataset(Dataset):
                 img_trg = cv2.cvtColor(img_trg, cv2.COLOR_BGR2RGB)
                 # Resize target to match source for FFT
                 img_trg = cv2.resize(img_trg, (w, h))
-                img = fourier_augmentation(img, img_trg, beta=self.beta)
+                # img = fourier_augmentation(img, img_trg, beta=self.beta)
+                img = img
 
         # 3. 讀取標籤
         lbl_name = os.path.splitext(os.path.basename(img_path))[0] + ".txt"

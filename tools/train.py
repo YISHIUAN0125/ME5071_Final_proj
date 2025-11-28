@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 
 if __name__ == '__main__':
-    model = YOLO("./models/yolo11n-seg.pt")
+    model = YOLO("./models/yolo11x-seg.pt")
     model.to('cuda')
 
-    results = model.train(data="data/data.yaml", batch=8, epochs=100, imgsz=1000, patience=20)
+    results = model.train(data="data/mixed/data.yaml", batch=4, epochs=100, imgsz=1000, patience=20)
