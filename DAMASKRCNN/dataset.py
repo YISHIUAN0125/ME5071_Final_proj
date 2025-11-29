@@ -16,14 +16,16 @@ class CustomDataset(Dataset):
         self.img_dir = os.path.join(root_dir, subset, 'images')
         self.lbl_dir = os.path.join(root_dir, subset, 'labels')
         
-        # 支援 jpg, png, jpeg
-        self.img_paths = sorted(
-            glob.glob(os.path.join(self.img_dir, "*.jpg")) + 
-            glob.glob(os.path.join(self.img_dir, "*.png")) +
-            glob.glob(os.path.join(self.img_dir, "*.jpeg"))
-        )
+        #supported image type
+        extensions = ['*.jpg', '*.JPG', '*.jpeg', '*.JPEG', '*.png', '*.PNG']
+        self.img_paths = []
+        for ext in extensions:
+            self.img_paths.extend(glob.glob(os.path.join(self.img_dir, ext)))
+        self.img_paths = sorted(list(set(self.img_paths)))
         
         self.transforms = transforms
+
+        # TODO abandoned
         self.target_img_paths = target_img_paths
         self.fourier_prob = fourier_prob
         self.beta = beta
@@ -34,7 +36,7 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         img_path = self.img_paths[idx]
         
-        # 1. 讀取圖片
+        # Read image
         img = cv2.imread(img_path)
 
         if img is None:
@@ -42,16 +44,16 @@ class CustomDataset(Dataset):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         h, w, _ = img.shape
 
-        # 2. Fourier Augmentation (僅針對 Source Domain 訓練時)
-        if self.target_img_paths and random.random() < self.fourier_prob:
-            trg_path = random.choice(self.target_img_paths)
-            img_trg = cv2.imread(trg_path)
-            if img_trg is not None:
-                img_trg = cv2.cvtColor(img_trg, cv2.COLOR_BGR2RGB)
-                # Resize target to match source for FFT
-                img_trg = cv2.resize(img_trg, (w, h))
-                # img = fourier_augmentation(img, img_trg, beta=self.beta)
-                img = img
+        # TODO abandoned
+        # if self.target_img_paths and random.random() < self.fourier_prob:
+        #     trg_path = random.choice(self.target_img_paths)
+        #     img_trg = cv2.imread(trg_path)
+        #     if img_trg is not None:
+        #         img_trg = cv2.cvtColor(img_trg, cv2.COLOR_BGR2RGB)
+        #         # Resize target to match source for FFT
+        #         img_trg = cv2.resize(img_trg, (w, h))
+        #         # img = fourier_augmentation(img, img_trg, beta=self.beta)
+        #         img = img
 
         # 3. 讀取標籤
         lbl_name = os.path.splitext(os.path.basename(img_path))[0] + ".txt"
@@ -71,21 +73,21 @@ class CustomDataset(Dataset):
                 # parts[1:] are polygon coords
                 poly_norm = np.array(parts[1:]).reshape(-1, 2)
                 
-                # 反歸一化
+                # denormalized
                 poly = poly_norm.copy()
                 poly[:, 0] *= w
                 poly[:, 1] *= h
                 poly = poly.astype(np.int32)
 
-                # 計算 Bbox
+                # calculate Bbox
                 x1, y1 = np.min(poly[:, 0]), np.min(poly[:, 1])
                 x2, y2 = np.max(poly[:, 0]), np.max(poly[:, 1])
 
-                # [重要] 檢查 Bbox 是否合法 (寬高需 > 0)
+                # check valid box
                 if x2 <= x1 + 1 or y2 <= y1 + 1:
                     continue
 
-                # 生成 Mask
+                # generate mask
                 mask = np.zeros((h, w), dtype=np.uint8)
                 cv2.fillPoly(mask, [poly], 1)
                 masks.append(mask)
@@ -94,22 +96,49 @@ class CustomDataset(Dataset):
                 labels.append(1) # Cabbage (Mask R-CNN 背景固定為 0)
 
         # 4. 轉換為 Tensor
+        img_tensor = torch.from_numpy(img).permute(2, 0, 1) # (C, H, W)
+
         target = {}
-        target["boxes"] = torch.as_tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4), dtype=torch.float32)
-        target["labels"] = torch.as_tensor(labels, dtype=torch.int64) if labels else torch.zeros((0,), dtype=torch.int64)
-        target["masks"] = torch.as_tensor(np.array(masks), dtype=torch.uint8) if masks else torch.zeros((0, h, w), dtype=torch.uint8)
-        target["image_id"] = torch.tensor([idx])
-        
-        # 計算 area (用於 COCO 評估)
         if len(boxes) > 0:
+            target["boxes"] = torch.as_tensor(boxes, dtype=torch.float32)
+            # Mask 需要是 (N, H, W)
+            target["masks"] = torch.as_tensor(np.array(masks), dtype=torch.uint8)
+            target["labels"] = torch.as_tensor(labels, dtype=torch.int64)
             target["area"] = (target["boxes"][:, 3] - target["boxes"][:, 1]) * (target["boxes"][:, 2] - target["boxes"][:, 0])
             target["iscrowd"] = torch.zeros((len(labels),), dtype=torch.int64)
         else:
-             target["area"] = torch.zeros((0,), dtype=torch.float32)
-             target["iscrowd"] = torch.zeros((0,), dtype=torch.int64)
+            target["boxes"] = torch.zeros((0, 4), dtype=torch.float32)
+            target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
+            target["labels"] = torch.zeros((0,), dtype=torch.int64)
+            target["area"] = torch.zeros((0,), dtype=torch.float32)
+            target["iscrowd"] = torch.zeros((0,), dtype=torch.int64)
+            
+        target["image_id"] = torch.tensor([idx])
+        
+        # target["boxes"] = torch.as_tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4), dtype=torch.float32)
+        # target["labels"] = torch.as_tensor(labels, dtype=torch.int64) if labels else torch.zeros((0,), dtype=torch.int64)
+        # target["masks"] = torch.as_tensor(np.array(masks), dtype=torch.uint8) if masks else torch.zeros((0, h, w), dtype=torch.uint8)
+        # target["image_id"] = torch.tensor([idx])
+        
+        # # 計算 area (用於 COCO 評估)
+        # if len(boxes) > 0:
+        #     target["area"] = (target["boxes"][:, 3] - target["boxes"][:, 1]) * (target["boxes"][:, 2] - target["boxes"][:, 0])
+        #     target["iscrowd"] = torch.zeros((len(labels),), dtype=torch.int64)
+        # else:
+        #      target["area"] = torch.zeros((0,), dtype=torch.float32)
+        #      target["iscrowd"] = torch.zeros((0,), dtype=torch.int64)
 
         # 圖片歸一化 (Mask R-CNN 內部 transform 會做標準化，這裡轉成 0-1 即可)
-        img_tensor = torch.from_numpy(img / 255.0).permute(2, 0, 1).float()
+        # img_tensor = torch.from_numpy(img / 255.0).permute(2, 0, 1).float()
+        
+        if self.transforms is not None:
+            # v2 transforms 接受 (image, target) 並同時轉換兩者
+            img_tensor, target = self.transforms(img_tensor, target)
+
+        # 5. 最後確保圖片是 Float (0-1) 這是模型吃的格式
+        # 如果 transforms 裡面沒有 ToDtype(float32, scale=True)，這裡要做
+        if img_tensor.dtype == torch.uint8:
+            img_tensor = img_tensor.float() / 255.0
         
         return img_tensor, target
 
