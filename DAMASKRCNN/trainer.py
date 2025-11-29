@@ -5,6 +5,8 @@ import time
 import math
 import sys
 from tqdm import tqdm
+import csv
+from .yolo_teacher import YOLOTeacher
 
 class Trainer:
     def __init__(
@@ -24,7 +26,9 @@ class Trainer:
         print_freq=10,
         patience=5,
         min_delta=0.001,
-        save_interval=20,  # [New] Save checkpoint every N epochs
+        save_interval=20,
+        yolo_path=None, 
+        lambda_yolo=0.1,
         **kwargs
     ):
         self.model = model.to(device)
@@ -36,6 +40,12 @@ class Trainer:
         self.lambda_domain = lambda_domain
         self.total_epochs = total_epochs
         self.print_freq = print_freq
+
+        self.yolo_path = yolo_path
+        self.lambda_yolo = lambda_yolo
+        self.yolo_teacher = None
+        if self.yolo_path:
+            self.yolo_teacher = YOLOTeacher(model_path=self.yolo_path, device=self.device)
 
         self.lr = lr
         self.weight_decay = weight_decay
@@ -63,6 +73,14 @@ class Trainer:
             self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=step_size, gamma=gamma)
 
         os.makedirs(self.save_dir, exist_ok=True)
+
+        # [New] 初始化 Log 檔案
+        self.log_path = os.path.join(self.save_dir, 'training_log.csv')
+        # 如果檔案不存在，寫入 Header
+        if not os.path.exists(self.log_path):
+            with open(self.log_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['epoch', 'train_det_loss', 'train_dom_loss', 'val_det_loss', 'lr'])        
         
         self.global_step = 0
         self.current_epoch = 0
@@ -72,43 +90,74 @@ class Trainer:
         p = float(current_step) / total_steps
         return 2. / (1. + math.exp(-10 * p)) - 1
 
+    # def train(self):
+    #     print(f"Start training for {self.total_epochs} epochs...")
+    #     print(f" - Early Stopping Patience: {self.patience}")
+    #     print(f" - Save Interval: Every {self.save_interval} epochs")
+        
+    #     start_time = time.time()
+
+    #     for epoch in range(self.current_epoch, self.total_epochs):
+    #         self.current_epoch = epoch
+            
+    #         # 1. Train one epoch
+    #         self.train_one_epoch()
+            
+    #         # 2. Update Scheduler
+    #         if self.scheduler:
+    #             self.scheduler.step()
+            
+    #         # 3. Validate & Check Early Stopping
+    #         if self.val_loader:
+    #             val_loss = self.validate()
+                
+    #             if self.check_early_stopping(val_loss):
+    #                 print(f"\n[Early Stopping] Triggered at epoch {epoch+1}!")
+    #                 print(f"Best Validation Loss: {self.best_val_loss:.4f}")
+    #                 break
+            
+    #         # 4. Save Logic
+    #         # Always save 'latest' for resuming
+    #         self.save_checkpoint(filename='model_latest.pth')
+            
+    #         # Save specific epoch checkpoint only if interval condition is met
+    #         if (epoch + 1) % self.save_interval == 0:
+    #             print(f"  >>> Saving periodic checkpoint: model_epoch_{epoch+1}.pth")
+    #             self.save_checkpoint(filename=f'model_epoch_{epoch+1}.pth')
+
+    #     total_time = time.time() - start_time
+    #     print(f"Training finished in {total_time // 3600:.0f}h {(total_time % 3600) // 60:.0f}m")
+
     def train(self):
         print(f"Start training for {self.total_epochs} epochs...")
-        print(f" - Early Stopping Patience: {self.patience}")
-        print(f" - Save Interval: Every {self.save_interval} epochs")
         
-        start_time = time.time()
-
         for epoch in range(self.current_epoch, self.total_epochs):
             self.current_epoch = epoch
             
-            # 1. Train one epoch
-            self.train_one_epoch()
+            # 1. Train one epoch (取得平均 loss)
+            avg_det_loss, avg_dom_loss = self.train_one_epoch()
             
             # 2. Update Scheduler
-            if self.scheduler:
-                self.scheduler.step()
+            current_lr = self.optimizer.param_groups[0]['lr']
+            if self.scheduler: self.scheduler.step()
             
-            # 3. Validate & Check Early Stopping
+            # 3. Validate
+            val_loss = 0.0
             if self.val_loader:
                 val_loss = self.validate()
-                
                 if self.check_early_stopping(val_loss):
                     print(f"\n[Early Stopping] Triggered at epoch {epoch+1}!")
-                    print(f"Best Validation Loss: {self.best_val_loss:.4f}")
                     break
             
-            # 4. Save Logic
-            # Always save 'latest' for resuming
-            self.save_checkpoint(filename='model_latest.pth')
+            # 4. [New] 寫入 Log 到 CSV
+            with open(self.log_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([epoch + 1, f"{avg_det_loss:.4f}", f"{avg_dom_loss:.4f}", f"{val_loss:.4f}", f"{current_lr:.6f}"])
             
-            # Save specific epoch checkpoint only if interval condition is met
+            # 5. Save Checkpoints
+            self.save_checkpoint(filename='model_latest.pth')
             if (epoch + 1) % self.save_interval == 0:
-                print(f"  >>> Saving periodic checkpoint: model_epoch_{epoch+1}.pth")
                 self.save_checkpoint(filename=f'model_epoch_{epoch+1}.pth')
-
-        total_time = time.time() - start_time
-        print(f"Training finished in {total_time // 3600:.0f}h {(total_time % 3600) // 60:.0f}m")
 
     def check_early_stopping(self, val_loss): # TODO fix early stopping
         # If loss improves
@@ -133,6 +182,11 @@ class Trainer:
         
         pbar = tqdm(enumerate(self.source_loader), total=len_source, desc=f"Epoch {self.current_epoch+1}")
 
+        # [New] 用來累計 Loss
+        total_det_loss = 0.0
+        total_dom_loss = 0.0
+        steps = 0
+
         for i, (images_s, targets_s) in pbar:
             images_s = list(img.to(self.device) for img in images_s)
             targets_s = [{k: v.to(self.device) for k, v in t.items()} for t in targets_s]
@@ -149,29 +203,68 @@ class Trainer:
 
             self.optimizer.zero_grad()
 
+            # ==========================
+            # A. Source Domain Training
+            # ==========================
+            # 計算 Detection Loss + Domain Loss
             loss_dict_s = self.model(images_s, targets_s, domain_label=0, alpha=alpha, mode='source')
-            loss_dict_t = self.model(images_t, None, domain_label=1, alpha=alpha, mode='target')
+            
+            loss_det_s = sum(loss for k, loss in loss_dict_s.items() if k != 'domain_loss')
+            loss_dom_s = loss_dict_s['domain_loss']
 
-            loss_det = sum(loss for k, loss in loss_dict_s.items() if k != 'domain_loss')
-            loss_dom = loss_dict_s['domain_loss'] + loss_dict_t['domain_loss']
-            losses = loss_det + self.lambda_domain * loss_dom
+            # ==========================
+            # B. Target Domain Training
+            # ==========================
+            
+            # B-1. 純 Domain Adaptation (無標籤)
+            # 這裡我們只取 Domain Loss
+            loss_dict_t_dom = self.model(images_t, None, domain_label=1, alpha=alpha, mode='target')
+            loss_dom_t = loss_dict_t_dom['domain_loss']
+            
+            # B-2. YOLO Knowledge Distillation (偽標籤)
+            loss_det_t = torch.tensor(0.0, device=self.device)
+            
+            if self.yolo_teacher:
+                # 產生 Target Domain 的偽標籤
+                pseudo_targets = self.yolo_teacher.generate_targets(images_t)
+                
+                # 檢查這批圖有沒有抓到東西，如果有才算 Loss
+                if any(len(t['boxes']) > 0 for t in pseudo_targets):
+                    # 使用 mode='source' 來計算 Detection Loss
+                    # 但這裡傳入的是 Target Images 和 Pseudo Targets
+                    # 我們只取 detection loss 部分，忽略回傳的 domain loss (因為 B-1 算過了)
+                    loss_dict_t_yolo = self.model(images_t, pseudo_targets, domain_label=1, alpha=alpha, mode='source')
+                    loss_det_t = sum(loss for k, loss in loss_dict_t_yolo.items() if k != 'domain_loss')
+
+            # ==========================
+            # C. Total Loss & Optimization
+            # ==========================
+            # 總 Loss = Source偵測 + Lambda*Domain對抗 + Lambda_YOLO*Target偽標籤偵測
+            losses = loss_det_s + \
+                     self.lambda_domain * (loss_dom_s + loss_dom_t) + \
+                     self.lambda_yolo * loss_det_t
 
             if not math.isfinite(losses.item()):
-                print(f"Loss is NaN, stopping. {loss_dict_s}")
+                print(f"Loss is NaN. S: {loss_dict_s}")
                 sys.exit(1)
 
             losses.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
 
+            # 累計數值
+            total_det_loss += loss_det_s.item()
+            total_dom_loss += (loss_dom_s + loss_dom_t).item()
+            steps += 1
             self.global_step += 1
-            curr_lr = self.optimizer.param_groups[0]['lr']
-            
+
             pbar.set_postfix({
-                'det': f"{loss_det.item():.3f}",
-                'dom': f"{loss_dom.item():.3f}",
-                'lr': f"{curr_lr:.5f}"
+                'det': f"{loss_det_s.item():.3f}",
+                'dom': f"{(loss_dom_s + loss_dom_t).item():.3f}"
             })
+            
+        # 回傳平均 Loss
+        return total_det_loss / steps, total_dom_loss / steps
             
 
     def validate(self):
