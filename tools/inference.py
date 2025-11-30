@@ -38,6 +38,7 @@ class Inferencer:
             return
 
         original_img = cv2.imread(img_path)
+        original_img = cv2.resize(original_img, (1000, 1000))
         if original_img is None: return
         
         # 前處理 (0-1 Normalize + Tensor conversion)
@@ -57,8 +58,8 @@ class Inferencer:
         
         # 顯示或存檔
         if output_path:
-            cv2.imshow('test', result_img)
-            cv2.waitKey(10)
+            # cv2.imshow('test', result_img)
+            # cv2.waitKey(10)
             cv2.imwrite(output_path, result_img)
             print(f"Saved result to: {output_path}")
         else:
