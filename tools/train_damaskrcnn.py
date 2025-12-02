@@ -39,20 +39,13 @@ def get_transforms(split):
 def main():
     # 1. 設定參數
     DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    BATCH_SIZE = 2
+    BATCH_SIZE = 4
     NUM_WORKERS = 12
     EPOCHS = 200
     
     # [New] 定義增強
     train_transforms = get_transforms('train')
     val_transforms = get_transforms('valid')
-
-    # 2. 準備資料集
-    # ds_source = CustomDataset(root_dir='data/domain_a', subset='train', fourier_prob=0.4, beta=0.001)
-    
-    # ds_target = CustomDataset(root_dir='data/domain_b', subset='train')
-    
-    # ds_val = CustomDataset(root_dir='data/domain_a', subset='valid')
 
     # [New] 傳入 transforms
     ds_source = CustomDataset(
@@ -95,8 +88,8 @@ def main():
         target_loader=loader_target,
         val_loader=loader_val,
         device=DEVICE,
-        save_dir='./runs/exp5_da_cabbage', # 輸出目錄
-        lambda_domain=0.001,    # Domain Loss 的權重
+        save_dir='./runs/exp6_da_cabbage', # 輸出目錄
+        lambda_domain=0.01,    # Domain Loss 的權重
         total_epochs=EPOCHS,
         save_interval=20,      # Example: Save at epoch 20, 40, 60, 80, 100
         patience=30,
