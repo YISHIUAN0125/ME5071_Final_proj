@@ -90,44 +90,6 @@ class Trainer:
         p = float(current_step) / total_steps
         return 2. / (1. + math.exp(-10 * p)) - 1
 
-    # def train(self):
-    #     print(f"Start training for {self.total_epochs} epochs...")
-    #     print(f" - Early Stopping Patience: {self.patience}")
-    #     print(f" - Save Interval: Every {self.save_interval} epochs")
-        
-    #     start_time = time.time()
-
-    #     for epoch in range(self.current_epoch, self.total_epochs):
-    #         self.current_epoch = epoch
-            
-    #         # 1. Train one epoch
-    #         self.train_one_epoch()
-            
-    #         # 2. Update Scheduler
-    #         if self.scheduler:
-    #             self.scheduler.step()
-            
-    #         # 3. Validate & Check Early Stopping
-    #         if self.val_loader:
-    #             val_loss = self.validate()
-                
-    #             if self.check_early_stopping(val_loss):
-    #                 print(f"\n[Early Stopping] Triggered at epoch {epoch+1}!")
-    #                 print(f"Best Validation Loss: {self.best_val_loss:.4f}")
-    #                 break
-            
-    #         # 4. Save Logic
-    #         # Always save 'latest' for resuming
-    #         self.save_checkpoint(filename='model_latest.pth')
-            
-    #         # Save specific epoch checkpoint only if interval condition is met
-    #         if (epoch + 1) % self.save_interval == 0:
-    #             print(f"  >>> Saving periodic checkpoint: model_epoch_{epoch+1}.pth")
-    #             self.save_checkpoint(filename=f'model_epoch_{epoch+1}.pth')
-
-    #     total_time = time.time() - start_time
-    #     print(f"Training finished in {total_time // 3600:.0f}h {(total_time % 3600) // 60:.0f}m")
-
     def train(self):
         print(f"Start training for {self.total_epochs} epochs...")
         
