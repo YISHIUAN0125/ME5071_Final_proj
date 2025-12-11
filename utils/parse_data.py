@@ -7,11 +7,12 @@ from tqdm import tqdm
 import yaml
 
 class DatasetBuilder:
-    def __init__(self, target_size=(640, 640), val_ratio=0.2, test_ratio=0.1, seed=42):
+    def __init__(self, target_size=(640, 640), val_ratio=0.2, test_ratio=0.1, seed=42, min_area=1000):
         self.target_size = target_size
         self.val_ratio = val_ratio
         self.test_ratio = test_ratio
         self.seed = seed
+        self.min_area = min_area
         self.all_items = []  # 儲存圖片資料
 
     def add_source(self, json_path, source_img_root, prefix=""):
@@ -119,18 +120,53 @@ class DatasetBuilder:
 
             # 座標轉換
             lines = []
+
+            # TODO modified: ignore small areas
+            h_resized, w_resized = self.target_size
             for poly in item['polygons']:
-                poly = poly.astype(float)
-                poly[0::2] /= w
-                poly[1::2] /= h
-                poly = np.clip(poly, 0.0, 1.0)
-                coords = ' '.join([f"{c:.6f}" for c in poly])
-                lines.append(f"0 {coords}")
+                scale_x = w_resized / w
+                scale_y = h_resized / h
+
+                poly_calc = poly.copy().reshape(-1, 2).astype(np.float32)
+                poly_calc[:, 0] *= scale_x
+                poly_calc[:, 1] *= scale_y
+                # poly_calc = poly_calc.astype(np.float32)
+
+                area = cv2.contourArea(poly_calc)
+                
+                # 2. 計算 BBox 寬高 (作為雙重檢查)
+                x_min, y_min = np.min(poly_calc, axis=0)
+                x_max, y_max = np.max(poly_calc, axis=0)
+                box_w = x_max - x_min
+                box_h = y_max - y_min
+
+                # 條件：面積太小 或 長寬任一邊太短 (例如小於 10 pixel)
+                if area < self.min_area or box_w < 10 or box_h < 10:
+                    continue # 跳過這個物件，不寫入 txt
+                # --- [過濾邏輯結束] ---
+
+                # 如果通過檢查，繼續做歸一化並寫入
+                poly_norm = poly.astype(float)
+                poly_norm[0::2] /= w  # 除以原圖寬
+                poly_norm[1::2] /= h  # 除以原圖高
+                poly_norm = np.clip(poly_norm, 0.0, 1.0)
+                
+                coords_str = ' '.join([f"{c:.6f}" for c in poly_norm])
+                lines.append(f"0 {coords_str}")
+
+            # for poly in item['polygons']:
+            #     poly = poly.astype(float)
+            #     poly[0::2] /= w
+            #     poly[1::2] /= h
+            #     poly = np.clip(poly, 0.0, 1.0)
+            #     coords = ' '.join([f"{c:.6f}" for c in poly])
+            #     lines.append(f"0 {coords}")
 
             if lines:
                 with open(dst_lbl, 'w', encoding='utf-8') as f:
                     f.write('\n'.join(lines) + '\n')
-        except Exception:
+        except Exception as e:
+            print(e)
             pass
 
     def _create_yaml(self, output_dir):
@@ -183,34 +219,3 @@ class DatasetBuilder:
                         polys.append(np.array(pts))
             res.append({'file_name': fname, 'polygons': polys})
         return res
-
-# ================= 主程式：分別產生 A, B, Mixed =================
-if __name__ == '__main__':
-    
-    # 設定路徑常數
-    PATH_A_JSON = 'source_dir/cabbages/annotation.json'
-    PATH_A_ROOT = 'source_dir/cabbages/images'
-    
-    PATH_B_JSON = 'source_dir/white_cabbage/annotation_white_cabbage.json'
-    PATH_B_ROOT = 'source_dir/white_cabbage'
-
-    # 1. 產生 Domain A 單獨資料集
-    builder_a = DatasetBuilder()
-    builder_a.add_source(PATH_A_JSON, PATH_A_ROOT, prefix="") # 單獨產生時不加前綴，保持原檔名
-    builder_a.export('data/domain_a')
-
-    # 2. 產生 Domain B 單獨資料集
-    builder_b = DatasetBuilder()
-    builder_b.add_source(PATH_B_JSON, PATH_B_ROOT, prefix="")
-    builder_b.export('data/domain_b')
-
-    # 3. 產生 Mixed (A + B) 資料集
-    builder_mix = DatasetBuilder()
-    
-    # 這裡加入 prefix 是為了避免兩邊有檔名重複 (例如都有 001.jpg)
-    builder_mix.add_source(PATH_A_JSON, PATH_A_ROOT, prefix="A_") 
-    builder_mix.add_source(PATH_B_JSON, PATH_B_ROOT, prefix="B_")
-    
-    builder_mix.export('data/mixed')
-
-    print("\n全部處理完成！")
