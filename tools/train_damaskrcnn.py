@@ -14,6 +14,11 @@ def get_transforms(split):
             # 2. 幾何變換 (同時作用於 Image, BBox, Mask)
             v2.RandomHorizontalFlip(p=0.5),
             v2.RandomVerticalFlip(p=0.5), # 視資料集特性決定是否開啟
+
+            v2.RandomShortestSize(
+                min_size=(640, 672, 704, 736, 768, 800, 1000), 
+                max_size=1000
+            ),
             
             # 隨機縮放與裁切 (Scale Jitter) - 對 Mask R-CNN 很有用
             # v2.RandomZoomOut(fill={0:0, 1:0, 2:0}, side_range=(1.0, 1.5), p=0.5),
