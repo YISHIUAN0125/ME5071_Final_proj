@@ -4,109 +4,217 @@ from tqdm import tqdm
 import argparse
 import os
 import sys
+import numpy as np
+
 from DAMASKRCNN.dataset import CustomDataset, collate_fn
 from DAMASKRCNN.damaskrcnn import DAMaskRCNN
-from torchmetrics.detection.mean_ap import MeanAveragePrecision
-from pprint import pprint
 
-def evaluate(model, val_loader, device):
+# 引入標準評估工具
+from torchmetrics.detection.mean_ap import MeanAveragePrecision
+import torchvision
+
+def calculate_batch_metrics(preds, targets, conf_threshold=0.5, iou_threshold=0.5):
     """
-    計算 BBox 和 Mask 的 mAP 與 Recall
+    手動計算 TP, FP, FN 以及數量，用於計算 Precision, Recall, F1
+    """
+    tp = 0
+    fp = 0
+    fn = 0
+    
+    pred_count = 0
+    gt_count = 0
+
+    for pred, target in zip(preds, targets):
+        # 1. 根據信心度過濾預測框
+        keep = pred['scores'] >= conf_threshold
+        pred_boxes = pred['boxes'][keep]
+        gt_boxes = target['boxes']
+
+        # 統計數量
+        pred_count += len(pred_boxes)
+        gt_count += len(gt_boxes)
+
+        # 處理邊界情況
+        if len(pred_boxes) == 0:
+            fn += len(gt_boxes)
+            continue
+        
+        if len(gt_boxes) == 0:
+            fp += len(pred_boxes)
+            continue
+
+        # 2. 計算 IoU (Intersection over Union)
+        # 輸出形狀: (預測框數, 真實框數)
+        iou_matrix = torchvision.ops.box_iou(pred_boxes, gt_boxes)
+
+        # 3. 進行匹配 (Greedy Matching)
+        matched_gt = set()
+        
+        # 對每一個預測框，找出重疊最大的真實框
+        for i in range(len(pred_boxes)):
+            max_iou, max_idx = torch.max(iou_matrix[i], dim=0)
+            
+            # 如果 IoU 大於門檻，且該真實框還沒被配對過 -> TP
+            if max_iou >= iou_threshold and max_idx.item() not in matched_gt:
+                tp += 1
+                matched_gt.add(max_idx.item())
+            else:
+                # 否則 -> FP (誤判)
+                fp += 1
+        
+        # 沒被配對到的真實框 -> FN (漏抓)
+        fn += len(gt_boxes) - len(matched_gt)
+
+    return tp, fp, fn, pred_count, gt_count
+
+def evaluate(model, val_loader, device, conf_threshold=0.5):
+    """
+    計算 BBox 和 Mask 的 mAP，並額外計算 Precision, Recall, F1, Count
     """
     model.eval()
     
-    # 初始化指標計算器
-    # class_metrics=True: 會顯示每個類別的獨立分數
-    # iou_type: 同時計算 BBox 和 Segmentation Mask
-    metric = MeanAveragePrecision(class_metrics=True, iou_type=['bbox', 'segm'])
-    metric.to(device)
+    # 1. 標準 mAP 計算器 (使用 torchmetrics)
+    map_metric = MeanAveragePrecision(class_metrics=False, iou_type=['bbox', 'segm'])
+    map_metric.to(device)
 
-    print("開始評估 (這可能需要一點時間)...")
+    # 2. 自定義統計變數
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
+    total_pred_count = 0
+    total_gt_count = 0
+
+    print(f"開始評估 (Confidence Threshold: {conf_threshold})...")
     
     with torch.no_grad():
         for images, targets in tqdm(val_loader, desc="Evaluating"):
-            # 1.搬移資料到 GPU
+            # 搬移資料
             images = [img.to(device) for img in images]
-            
-            # targets 需要留在 GPU 並且格式要正確
-            # CustomDataset 的 target 已經是 dict 包含 boxes, labels, masks
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-            # 2. 模型推論
-            # model.eval() 模式下，Mask R-CNN 會回傳 predictions (List[Dict])
-            preds = model(images)
+            # 推論 (記得加 mode='inference')
+            preds = model(images, mode='inference')
 
-            # 3. 更新指標
-            # torchmetrics 接受 (preds, targets)
-            metric.update(preds, targets)
-
-    # 4. 計算最終結果
-    print("正在計算統計數據...")
-    result = metric.compute()
-    
-    return result
-
-def print_results(result):
-    """ 漂亮地印出結果 """
-    
-    # 定義要顯示的指標 Mapping
-    # map: mAP (IoU=0.50:0.95)
-    # map_50: mAP (IoU=0.50)
-    # mar_100: Recall (最多考慮前100個框) -> 這是主要的 Recall 指標
-    
-    keys_to_print = [
-        ('map', 'mAP (IoU=0.5:0.95)'),
-        ('map_50', 'mAP (IoU=0.50)    '),
-        ('map_75', 'mAP (IoU=0.75)    '),
-        ('mar_100', 'Recall (AR@100)   ') 
-    ]
-
-    print("\n" + "="*40)
-    print(" >> Evaluation Results (COCO Style)")
-    print("="*40)
-
-    # 分別印出 BBox 和 Mask 的結果
-    # torchmetrics 的結果如果包含 segm，通常 key 會是一樣的，
-    # 但如果用 iou_type=['bbox', 'segm']，它可能不會自動分層，
-    # 實際上 torchmetrics 會回傳混合結果，或是我們需要分開宣告兩個 metric 物件比較保險。
-    # 為了簡單起見，上面的 code 使用混合模式，這裡直接印出總表。
-    
-    # 為了更清楚區分 Box 和 Mask，通常建議跑兩次 metric 或看詳細 key
-    # 但 torchmetrics 預設會輸出整體數值。
-    
-    # 讓我們檢查 result 的 keys 是否有區分 (通常沒有區分後綴，除非分開跑)
-    # 這裡我們簡單印出所有數值
-    
-    print(f"{'Metric':<25} | {'Value':<10}")
-    print("-" * 38)
-    
-    for key, value in result.items():
-        # 只印出純量 (Scalar)，忽略 per_class 陣列
-        if value.numel() == 1: 
-            print(f"{key:<25} | {value.item():.4f}")
+            # --- [關鍵修正] 格式轉換 ---
+            # torchmetrics/pycocotools 要求 Mask 必須是 uint8
+            # 且 Mask R-CNN 輸出 shape 為 (N, 1, H, W)，通常需要 squeeze 成 (N, H, W)
             
-    print("-" * 38)
-    print("解釋:")
-    print(" - map: 綜合準確率 (越接近 1 越好)")
-    print(" - map_50: 寬鬆準確率 (IoU>0.5 就算對)")
-    print(" - mar_100: 召回率 (Recall)，代表有多少真值被抓出來")
-    print("="*40)
+            for p in preds:
+                # 預測 Mask: Float(0~1) -> Threshold(>0.5) -> Bool -> Uint8
+                p['masks'] = (p['masks'] > 0.5).squeeze(1).to(dtype=torch.uint8)
+            
+            for t in targets:
+                # 真實 Mask: 確保也是 Uint8 (有些 transform 可能會轉成 float)
+                t['masks'] = t['masks'].to(dtype=torch.uint8)
+            # --------------------------
+
+            # 更新標準 mAP 指標
+            map_metric.update(preds, targets)
+
+            # 計算自定義指標
+            tp, fp, fn, p_count, g_count = calculate_batch_metrics(
+                preds, targets, conf_threshold=conf_threshold, iou_threshold=0.5
+            )
+            
+            total_tp += tp
+            total_fp += fp
+            total_fn += fn
+            total_pred_count += p_count
+            total_gt_count += g_count
+
+    print("正在計算統計數據...")
+    
+    # --- 計算 mAP 結果 ---
+    map_results = map_metric.compute()
+
+    # print(map_results.keys())
+    
+    # --- 計算自定義結果 ---
+    epsilon = 1e-7 # 防止除以零
+    
+    # Precision = TP / (TP + FP)
+    precision = total_tp / (total_tp + total_fp + epsilon)
+    
+    # Recall = TP / (TP + FN)
+    recall = total_tp / (total_tp + total_fn + epsilon)
+    
+    # F1 Score = 2 * (P * R) / (P + R)
+    f1_score = 2 * (precision * recall) / (precision + recall + epsilon)
+    
+    # 數量誤差
+    count_diff = total_pred_count - total_gt_count
+    mae = abs(count_diff) # 平均絕對誤差的概念，這裡是總數差異
+
+    custom_results = {
+        "Precision": precision,
+        "Recall": recall,
+        "F1_Score": f1_score,
+        "Pred_Count": total_pred_count,
+        "GT_Count": total_gt_count,
+        "Count_Diff": count_diff
+    }
+
+    return map_results, custom_results
+
+def print_results(map_results, custom_results):
+    """ 格式化輸出結果 """
+    print("\n" + "="*50)
+    print(" >> Evaluation Results")
+    print("="*50)
+
+    print(f"{'Metric':<30} | {'Value':<10}")
+    print("-" * 45)
+    
+    # 1. 標準 COCO mAP
+    # map: IoU=0.50:0.95 的平均
+    # map_50: IoU=0.50 的 mAP
+    if 'bbox_map' in map_results:
+        print(f"{'mAP (IoU=0.5:0.95)':<30} | {map_results['bbox_map'].item():.4f}")
+    if 'bbox_map_50' in map_results:
+        print(f"{'mAP (IoU=0.50)':<30} | {map_results['bbox_map_50'].item():.4f}")
+
+    print("-" * 45)
+    
+    # 2. 自定義指標 (基於特定 Conf Threshold)
+    print(f"{'Precision':<30} | {custom_results['Precision']:.4f}")
+    print(f"{'Recall':<30} | {custom_results['Recall']:.4f}")
+    print(f"{'F1 Score':<30} | {custom_results['F1_Score']:.4f}")
+    
+    print("-" * 45)
+    
+    # 3. 數量統計
+    pred_c = custom_results['Pred_Count']
+    gt_c = custom_results['GT_Count']
+    diff = custom_results['Count_Diff']
+    
+    print(f"{'Total Predicted Count':<30} | {pred_c}")
+    print(f"{'Total Ground Truth Count':<30} | {gt_c}")
+    print(f"{'Difference (Pred - GT)':<30} | {diff}")
+    
+    # 計算計數準確率 (1 - 誤差率)
+    if gt_c > 0:
+        counting_acc = 1.0 - (abs(diff) / gt_c)
+        print(f"{'Counting Accuracy':<30} | {max(0, counting_acc):.4f}")
+
+    print("="*50 + "\n")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, required=True, help='Path to .pth model file')
     parser.add_argument('--data_root', type=str, default='data/domain_a', help='Path to dataset root')
     parser.add_argument('--backbone', type=str, default='resnet34', help='Backbone name (resnet18/34/50)')
+    # 新增參數：信心閾值
+    parser.add_argument('--conf', type=float, default=0.5, help='Confidence threshold for metrics (default: 0.5)')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 1. 準備資料集
-    # 注意：驗證時不要開強增強，也不要做多尺度，保持乾淨
+    # 驗證集使用 valid subset
     val_dataset = CustomDataset(
         root_dir=args.data_root, 
         subset='valid',
-        transforms=None # 驗證集建議不要做額外增強，dataset 內部會做基本的 ToTensor
+        transforms=None 
     )
     
     val_loader = DataLoader(
@@ -120,11 +228,13 @@ def main():
     print(f"Validation Images: {len(val_dataset)}")
 
     # 2. 載入模型
-    # 記得 pretrained=False，因為我們要載入自己的權重
+    # 注意：這裡 num_classes=2 (背景+高麗菜)
     model = DAMaskRCNN(num_classes=2, backbone_name=args.backbone)
     
     print(f"Loading weights from {args.weights}...")
     checkpoint = torch.load(args.weights, map_location=device)
+    
+    # 處理權重載入 (相容包含 model_state_dict 或直接存 dict 的情況)
     if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
     else:
@@ -133,10 +243,10 @@ def main():
     model.to(device)
 
     # 3. 執行評估
-    results = evaluate(model, val_loader, device)
+    map_res, custom_res = evaluate(model, val_loader, device, conf_threshold=args.conf)
     
     # 4. 顯示結果
-    print_results(results)
+    print_results(map_res, custom_res)
 
 if __name__ == '__main__':
     main()
