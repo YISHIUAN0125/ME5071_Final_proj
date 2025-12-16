@@ -15,10 +15,10 @@ def get_transforms(split):
             v2.RandomHorizontalFlip(p=0.5),
             v2.RandomVerticalFlip(p=0.5), # 視資料集特性決定是否開啟
 
-            v2.RandomShortestSize(
-                min_size=(640, 672, 704, 736, 768, 800, 1000), 
-                max_size=1000
-            ),
+            # v2.RandomShortestSize(
+            #     min_size=(640, 672, 704, 736, 768, 800, 1000), 
+            #     max_size=1000
+            # ),
             
             # 隨機縮放與裁切 (Scale Jitter) - 對 Mask R-CNN 很有用
             # v2.RandomZoomOut(fill={0:0, 1:0, 2:0}, side_range=(1.0, 1.5), p=0.5),
@@ -44,7 +44,7 @@ def get_transforms(split):
 def main():
     # 1. 設定參數
     DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    BATCH_SIZE = 4
+    BATCH_SIZE = 2
     NUM_WORKERS = 12
     EPOCHS = 200
     
@@ -93,15 +93,16 @@ def main():
         target_loader=loader_target,
         val_loader=loader_val,
         device=DEVICE,
-        save_dir='./runs/exp6_da_cabbage', # 輸出目錄
+        save_dir='./runs/exp2_da_cabbage', # 輸出目錄
         lambda_domain=0.01,    # Domain Loss 的權重
         total_epochs=EPOCHS,
         save_interval=20,      # Example: Save at epoch 20, 40, 60, 80, 100
         patience=30,
+        min_delta=0.0001,
         lr=1e-3,
         weight_decay=5e-4,
         yolo_path='runs/segment/train/weights/best.pt', # 指定你的 .pt 檔
-        lambda_yolo=0.1,  # 建議從 0.1 開始嘗試
+        lambda_yolo=0.2,  # 建議從 0.1 開始嘗試
         scheduler='cosine',
     )
 

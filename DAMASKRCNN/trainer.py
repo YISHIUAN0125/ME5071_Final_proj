@@ -7,6 +7,7 @@ import sys
 from tqdm import tqdm
 import csv
 from .yolo_teacher import YOLOTeacher
+from torch.amp import autocast, GradScaler
 
 class Trainer:
     def __init__(
@@ -57,6 +58,8 @@ class Trainer:
         
         self.best_val_loss = float('inf')
         self.early_stop_counter = 0
+
+        self.grad_scaler = GradScaler()
         
         if optimizer is None:
             params = [p for p in self.model.parameters() if p.requires_grad]
@@ -165,54 +168,61 @@ class Trainer:
 
             self.optimizer.zero_grad()
 
-            # ==========================
-            # A. Source Domain Training
-            # ==========================
-            # 計算 Detection Loss + Domain Loss
-            loss_dict_s = self.model(images_s, targets_s, domain_label=0, alpha=alpha, mode='source')
-            
-            loss_det_s = sum(loss for k, loss in loss_dict_s.items() if k != 'domain_loss')
-            loss_dom_s = loss_dict_s['domain_loss']
-
-            # ==========================
-            # B. Target Domain Training
-            # ==========================
-            
-            # B-1. 純 Domain Adaptation (無標籤)
-            # 這裡我們只取 Domain Loss
-            loss_dict_t_dom = self.model(images_t, None, domain_label=1, alpha=alpha, mode='target')
-            loss_dom_t = loss_dict_t_dom['domain_loss']
-            
-            # B-2. YOLO Knowledge Distillation (偽標籤)
-            loss_det_t = torch.tensor(0.0, device=self.device)
-            
-            if self.yolo_teacher:
-                # 產生 Target Domain 的偽標籤
-                pseudo_targets = self.yolo_teacher.generate_targets(images_t)
+            # TODO 改用混合精度
+            with autocast():
+                # ==========================
+                # A. Source Domain Training
+                # ==========================
+                # 計算 Detection Loss + Domain Loss
+                loss_dict_s = self.model(images_s, targets_s, domain_label=0, alpha=alpha, mode='source')
                 
-                # 檢查這批圖有沒有抓到東西，如果有才算 Loss
-                if any(len(t['boxes']) > 0 for t in pseudo_targets):
-                    # 使用 mode='source' 來計算 Detection Loss
-                    # 但這裡傳入的是 Target Images 和 Pseudo Targets
-                    # 我們只取 detection loss 部分，忽略回傳的 domain loss (因為 B-1 算過了)
-                    loss_dict_t_yolo = self.model(images_t, pseudo_targets, domain_label=1, alpha=alpha, mode='source')
-                    loss_det_t = sum(loss for k, loss in loss_dict_t_yolo.items() if k != 'domain_loss')
+                loss_det_s = sum(loss for k, loss in loss_dict_s.items() if k != 'domain_loss')
+                loss_dom_s = loss_dict_s['domain_loss']
 
-            # ==========================
-            # C. Total Loss & Optimization
-            # ==========================
-            # 總 Loss = Source偵測 + Lambda*Domain對抗 + Lambda_YOLO*Target偽標籤偵測
-            losses = loss_det_s + \
-                     self.lambda_domain * (loss_dom_s + loss_dom_t) + \
-                     self.lambda_yolo * loss_det_t
+                # ==========================
+                # B. Target Domain Training
+                # ==========================
+                
+                # B-1. 純 Domain Adaptation (無標籤)
+                # 這裡我們只取 Domain Loss
+                loss_dict_t_dom = self.model(images_t, None, domain_label=1, alpha=alpha, mode='target')
+                loss_dom_t = loss_dict_t_dom['domain_loss']
+                
+                # B-2. YOLO Knowledge Distillation (偽標籤)
+                loss_det_t = torch.tensor(0.0, device=self.device)
+                
+                if self.yolo_teacher:
+                    # 產生 Target Domain 的偽標籤
+                    pseudo_targets = self.yolo_teacher.generate_targets(images_t)
+                    
+                    # 檢查這批圖有沒有抓到東西，如果有才算 Loss
+                    if any(len(t['boxes']) > 0 for t in pseudo_targets):
+                        # 使用 mode='source' 來計算 Detection Loss
+                        # 但這裡傳入的是 Target Images 和 Pseudo Targets
+                        # 我們只取 detection loss 部分，忽略回傳的 domain loss (因為 B-1 算過了)
+                        loss_dict_t_yolo = self.model(images_t, pseudo_targets, domain_label=1, alpha=alpha, mode='source')
+                        loss_det_t = sum(loss for k, loss in loss_dict_t_yolo.items() if k != 'domain_loss')
 
-            if not math.isfinite(losses.item()):
-                print(f"Loss is NaN. S: {loss_dict_s}")
-                sys.exit(1)
+                # ==========================
+                # C. Total Loss & Optimization
+                # ==========================
+                # 總 Loss = Source偵測 + Lambda*Domain對抗 + Lambda_YOLO*Target偽標籤偵測
+                losses = loss_det_s + \
+                        self.lambda_domain * (loss_dom_s + loss_dom_t) + \
+                        self.lambda_yolo * loss_det_t
 
-            losses.backward()
+                if not math.isfinite(losses.item()):
+                    print(f"Loss is NaN. S: {loss_dict_s}")
+                    sys.exit(1)
+
+            # losses.backward()
+            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+            # self.optimizer.step()
+
+            self.grad_scaler.scale(losses).backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
-            self.optimizer.step()
+            self.grad_scaler.step(self.optimizer)
+            self.grad_scaler.update()
 
             # 累計數值
             total_det_loss += loss_det_s.item()
