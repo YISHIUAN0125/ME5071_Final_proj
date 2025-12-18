@@ -202,7 +202,8 @@ def print_results(map_results, custom_results):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, required=True, help='Path to .pth model file')
-    parser.add_argument('--data_root', type=str, default='data/domain_a', help='Path to dataset root')
+    parser.add_argument('--data_root', type=str, default=None, help='Path to dataset root')
+    parser.add_argument('--explicit_path', type=str, default=None, help='Path to dataset root')
     parser.add_argument('--backbone', type=str, default='resnet34', help='Backbone name (resnet18/34/50)')
     # 新增參數：信心閾值
     parser.add_argument('--conf', type=float, default=0.5, help='Confidence threshold for metrics (default: 0.5)')
@@ -211,12 +212,20 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 1. 準備資料集
-    # 驗證集使用 valid subset
-    val_dataset = CustomDataset(
-        root_dir=args.data_root, 
-        subset='test',
-        transforms=None 
-    )
+    if args.explicit_path:
+        val_dataset = CustomDataset(
+            explicit_path=args.explicit_path,
+            transforms=None 
+        )
+    else:
+        if args.data_root is None:
+            raise ValueError('args.data_root should not be empty')
+        # 驗證集使用 valid subset
+        val_dataset = CustomDataset(
+            root_dir=args.data_root, 
+            subset='test',
+            transforms=None 
+        )
     
     val_loader = DataLoader(
         val_dataset, 
