@@ -8,7 +8,7 @@ import random
 from utils.augmentation import fourier_augmentation
 
 class CustomDataset(Dataset):
-    def __init__(self, root_dir, subset='train', transforms=None, target_img_paths=None, fourier_prob=0.0, beta=0.001):
+    def __init__(self, root_dir, subset='train', target_size=(1000, 1000), transforms=None, target_img_paths=None, fourier_prob=0.0, beta=0.001):
         """
         root_dir: e.g., 'data/domain_a'
         subset: 'train', 'valid', or 'test'
@@ -23,6 +23,7 @@ class CustomDataset(Dataset):
             self.img_paths.extend(glob.glob(os.path.join(self.img_dir, ext)))
         self.img_paths = sorted(list(set(self.img_paths)))
         
+        self.target_size = target_size
         self.transforms = transforms
 
         # TODO abandoned
@@ -42,18 +43,9 @@ class CustomDataset(Dataset):
         if img is None:
             raise ValueError(f"無法讀取圖片: {img_path}")
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        h, w, _ = img.shape
+        img = cv2.resize(img, self.target_size)
 
-        # TODO abandoned
-        # if self.target_img_paths and random.random() < self.fourier_prob:
-        #     trg_path = random.choice(self.target_img_paths)
-        #     img_trg = cv2.imread(trg_path)
-        #     if img_trg is not None:
-        #         img_trg = cv2.cvtColor(img_trg, cv2.COLOR_BGR2RGB)
-        #         # Resize target to match source for FFT
-        #         img_trg = cv2.resize(img_trg, (w, h))
-        #         # img = fourier_augmentation(img, img_trg, beta=self.beta)
-        #         img = img
+        h, w, _ = img.shape
 
         # 3. 讀取標籤
         lbl_name = os.path.splitext(os.path.basename(img_path))[0] + ".txt"
@@ -69,31 +61,97 @@ class CustomDataset(Dataset):
             
             for line in lines:
                 parts = list(map(float, line.strip().split()))
-                # parts[0] is class_id (0 for cabbage)
-                # parts[1:] are polygon coords
-                poly_norm = np.array(parts[1:]).reshape(-1, 2)
+                cls_id = int(parts[0]) # 雖然目前固定為 1，但保留讀取邏輯
                 
-                # denormalized
-                poly = poly_norm.copy()
-                poly[:, 0] *= w
-                poly[:, 1] *= h
-                poly = poly.astype(np.int32)
+                # 判斷是 YOLO BBox (5個值) 還是 Polygon (>5個值)
+                if len(parts) == 5:
+                    # --- 處理 YOLO BBox 格式 (class, xc, yc, w, h) ---
+                    # 格式: normalized center_x, center_y, width, height
+                    cx, cy, bw, bh = parts[1], parts[2], parts[3], parts[4]
+                    
+                    # 反正規化
+                    cx *= w
+                    cy *= h
+                    bw *= w
+                    bh *= h
+                    
+                    # 轉換為 x1, y1, x2, y2
+                    x1 = cx - bw / 2
+                    y1 = cy - bh / 2
+                    x2 = cx + bw / 2
+                    y2 = cy + bh / 2
+                    
+                    # 為了 Mask R-CNN，必須生成一個矩形的 Mask
+                    # 這裡建立矩形的四個角點用於 fillPoly
+                    poly = np.array([
+                        [x1, y1], [x2, y1], [x2, y2], [x1, y2]
+                    ], dtype=np.int32)
+                    
+                else:
+                    # --- 處理 YOLO Segmentation 格式 (class, x1, y1, x2, y2, ...) ---
+                    poly_norm = np.array(parts[1:]).reshape(-1, 2)
+                    
+                    # denormalized
+                    poly = poly_norm.copy()
+                    poly[:, 0] *= w
+                    poly[:, 1] *= h
+                    poly = poly.astype(np.int32)
+                    
+                    # calculate Bbox from polygon
+                    x1, y1 = np.min(poly[:, 0]), np.min(poly[:, 1])
+                    x2, y2 = np.max(poly[:, 0]), np.max(poly[:, 1])
 
-                # calculate Bbox
-                x1, y1 = np.min(poly[:, 0]), np.min(poly[:, 1])
-                x2, y2 = np.max(poly[:, 0]), np.max(poly[:, 1])
-
-                # check valid box
+                # check valid box (過濾無效框)
                 if x2 <= x1 + 1 or y2 <= y1 + 1:
                     continue
 
+                # 限制座標在圖片範圍內 (避免 padding 導致越界)
+                x1 = max(0, min(x1, w - 1))
+                y1 = max(0, min(y1, h - 1))
+                x2 = max(0, min(x2, w - 1))
+                y2 = max(0, min(y2, h - 1))
+
                 # generate mask
                 mask = np.zeros((h, w), dtype=np.uint8)
-                cv2.fillPoly(mask, [poly], 1)
+                # 注意：fillPoly 需要 list of arrays (int32)
+                cv2.fillPoly(mask, [poly.astype(np.int32)], 1)
                 masks.append(mask)
 
                 boxes.append([x1, y1, x2, y2])
-                labels.append(1) # Cabbage (Mask R-CNN 背景固定為 0)
+                labels.append(1) # Cabbage
+
+        # if os.path.exists(lbl_path):
+        #     with open(lbl_path, 'r') as f:
+        #         lines = f.readlines()
+            
+        #     for line in lines:
+        #         parts = list(map(float, line.strip().split()))
+        #         # parts[0] is class_id (0 for cabbage)
+        #         # parts[1:] are polygon coords
+        #         poly_norm = np.array(parts[1:]).reshape(-1, 2)
+                
+        #         # denormalized
+        #         poly = poly_norm.copy()
+        #         poly[:, 0] *= w
+        #         poly[:, 1] *= h
+        #         poly = poly.astype(np.int32)
+
+        #         # calculate Bbox
+        #         x1, y1 = np.min(poly[:, 0]), np.min(poly[:, 1])
+        #         x2, y2 = np.max(poly[:, 0]), np.max(poly[:, 1])
+
+        #         # check valid box
+        #         if x2 <= x1 + 1 or y2 <= y1 + 1:
+        #             continue
+
+        #         # generate mask
+        #         mask = np.zeros((h, w), dtype=np.uint8)
+        #         cv2.fillPoly(mask, [poly], 1)
+        #         masks.append(mask)
+
+        #         boxes.append([x1, y1, x2, y2])
+        #         labels.append(1) # Cabbage (Mask R-CNN 背景固定為 0)
+        
 
         # 4. 轉換為 Tensor
         img_tensor = torch.from_numpy(img).permute(2, 0, 1) # (C, H, W)
