@@ -43,9 +43,9 @@ All labels shoud be in YOLO format.
 
 ## For YOLO format evaluate v2
 ```
-python tools/evaluate.py --weight path to weight --data_root path to data root
+python tools/evaluate.py --weight path to weight --explicit_path path to data root
 ```
 example:
 ```
-python tools/evaluate.py --weight path to weight --data_root data/test/hard/
+python tools/evaluate.py --weight path to weight --explicit_path data/test/hard/
 ```
