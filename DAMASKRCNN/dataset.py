@@ -8,13 +8,30 @@ import random
 from utils.augmentation import fourier_augmentation
 
 class CustomDataset(Dataset):
-    def __init__(self, root_dir, subset='train', target_size=(1000, 1000), transforms=None, target_img_paths=None, fourier_prob=0.0, beta=0.001):
+    def __init__(self, root_dir=None, 
+                 subset=None,
+                 explicit_path=None,
+                 target_size=(1000, 1000), 
+                 transforms=None, 
+                 target_img_paths=None, 
+                 fourier_prob=0.0, 
+                 beta=0.001):
         """
         root_dir: e.g., 'data/domain_a'
         subset: 'train', 'valid', or 'test'
         """
-        self.img_dir = os.path.join(root_dir, subset, 'images')
-        self.lbl_dir = os.path.join(root_dir, subset, 'labels')
+        
+        if explicit_path:
+            print("test")
+            self.img_dir = os.path.join(explicit_path, 'images')
+            self.lbl_dir = os.path.join(explicit_path, 'labels')
+        else:
+            print("test2")
+            self.img_dir = os.path.join(root_dir, subset, 'images')
+            self.lbl_dir = os.path.join(root_dir, subset, 'labels')
+
+        if not os.path.exists(self.img_dir):
+            raise FileNotFoundError(f"File not found: {self.img_dir}")
         
         #supported image type
         extensions = ['*.jpg', '*.JPG', '*.jpeg', '*.JPEG', '*.png', '*.PNG']
