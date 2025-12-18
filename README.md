@@ -37,5 +37,15 @@ python tools/train_damaskrcnn.py
 ```
 python tools/evaluate.py --weight path to weight --data_root path to data root
 ```
-Please note that test images should be put in ./data/valid/images/ and labels should be in ./data/valid/labels/
+Please note that test images should be put in ./data/test/images/ and labels should be in ./data/test/labels/
 All labels shoud be in YOLO format.
+
+
+## For YOLO format evaluate v2
+```
+python tools/evaluate.py --weight path to weight --data_root path to data root
+```
+example:
+```
+python tools/evaluate.py --weight path to weight --data_root data/test/hard/
+```
